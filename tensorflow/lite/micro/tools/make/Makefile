@@ -147,10 +147,10 @@ COMMON_FLAGS := \
   -ffunction-sections \
   -fdata-sections \
   -fmessage-length=0 \
-  -DTF_LITE_STATIC_MEMORY \
   -DTF_LITE_DISABLE_X86_NEON \
   $(CC_WARNINGS) \
   $(ADDITIONAL_DEFINES)
+#  -DTF_LITE_STATIC_MEMORY \
 
 ifeq ($(TARGET), $(HOST_OS))
   # If we are not doing a cross-compilation then -DTF_LITE_USE_CTIME is what we
@@ -419,7 +419,12 @@ tensorflow/lite/micro/kernels/tanh.cc \
 tensorflow/lite/micro/kernels/transpose.cc \
 tensorflow/lite/micro/kernels/transpose_conv.cc \
 tensorflow/lite/micro/kernels/unpack.cc \
-tensorflow/lite/micro/kernels/zeros_like.cc
+tensorflow/lite/micro/kernels/zeros_like.cc \
+tensorflow/lite/micro/kernels/xtensa/lstm/kernels/lstm_eval.cc \
+tensorflow/lite/micro/kernels/xtensa/lstm/kernels/unidirectional_sequence_lstm.cc \
+tensorflow/lite/micro/kernels/xtensa/lstm/helper_utils/portable_tensor_utils.cc \
+tensorflow/lite/micro/kernels/xtensa/lstm/helper_utils/util.cc \
+tensorflow/lite/kernels/kernel_util.cc
 
 MICROLITE_TEST_HDRS := \
 $(wildcard tensorflow/lite/micro/testing/*.h)

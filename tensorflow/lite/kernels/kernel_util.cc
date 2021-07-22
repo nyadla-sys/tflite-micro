@@ -42,7 +42,8 @@ namespace {
 inline TfLiteTensor* GetTensorAtIndex(const TfLiteContext* context,
                                       int tensor_index) {
   if (context->tensors != nullptr) {
-    return &context->tensors[tensor_index];
+      return context->GetTensor(
+               context, tensor_index);//return &context->tensors[tensor_index];
   } else {
     return context->GetTensor(context, tensor_index);
   }

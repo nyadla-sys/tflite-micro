@@ -34,6 +34,12 @@ limitations under the License.
 #define TFLITE_SCHEMA_VERSION (3)
 
 namespace tflite {
+namespace internal {
+TfLiteStatus AddIntermediateParameters(const std::vector<int>& intermediates,
+                                       TfLiteNode& node,
+                                       const TfLiteRegistration* registration,
+                                       int* node_index);
+}
 
 class MicroInterpreter {
  public:
@@ -146,6 +152,15 @@ class MicroInterpreter {
                             ...);
   static TfLiteTensor* GetTensor(const struct TfLiteContext* context,
                                  int tensor_idx);
+  static TfLiteStatus ResizeTensor(TfLiteContext* context, TfLiteTensor* tensor,
+                                   TfLiteIntArray* new_size);
+  static TfLiteStatus ResizeTensorImpl(TfLiteContext* context,
+                                       TfLiteTensor* tensor,
+                                       TfLiteIntArray* new_size);
+
+  static TfLiteStatus BytesRequired(TfLiteContext* context, TfLiteType type,
+                                    const int* dims, size_t dims_size,
+                                    size_t* bytes);
   static TfLiteEvalTensor* GetEvalTensor(const struct TfLiteContext* context,
                                          int tensor_idx);
   static TfLiteStatus GetGraph(struct TfLiteContext* context,
@@ -160,6 +175,8 @@ class MicroInterpreter {
   bool tensors_allocated_;
 
   TfLiteStatus initialization_status_;
+
+  TfLiteEvalTensor* eval_tensors_ = nullptr;
 
   ScratchBufferHandle* scratch_buffer_handles_ = nullptr;
 

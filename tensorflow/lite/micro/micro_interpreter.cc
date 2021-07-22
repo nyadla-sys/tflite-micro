@@ -23,6 +23,7 @@ limitations under the License.
 #include "tensorflow/lite/core/api/error_reporter.h"
 #include "tensorflow/lite/core/api/tensor_utils.h"
 #include "tensorflow/lite/micro/flatbuffer_utils.h"
+#include "tensorflow/lite/micro/kernels/xtensa/lstm/helper_utils/util.h"
 #include "tensorflow/lite/micro/memory_helpers.h"
 #include "tensorflow/lite/micro/micro_allocator.h"
 #include "tensorflow/lite/micro/micro_error_reporter.h"
@@ -32,7 +33,34 @@ limitations under the License.
 #include "tensorflow/lite/schema/schema_utils.h"
 
 namespace tflite {
+template <class T>
+std::vector<int> FlatBufferIntArrayToVector(T* flat_array) {
+  // Initialize shape of tensors with null shape. Empty vectors are converted
+  // to nullptr for models that are constructed via flatbuffers::Pack.
+  if (flat_array == nullptr) {
+    return {};
+  }
+  std::vector<int> ret(flat_array->size());
+  for (size_t i = 0; i < flat_array->size(); i++) {
+    ret[i] = flat_array->Get(i);
+  }
+  return ret;
+}
+TfLiteStatus AddIntermediateParameters(const std::vector<int>& intermediates,
+                                       TfLiteNode* node,
+                                       const TfLiteRegistration* registration,
+                                       int* node_index) {
+  // if (node->intermediates) TfLiteIntArrayFree(node->intermediates); //Don't
+  // use malloc/free
 
+  // NOTE, here we are not using move semantics yet, since our internal
+  // representation isn't std::vector, but in the future we would like to avoid
+  // copies, so we want the interface to take r-value references now.
+
+  node->intermediates = tflite::ConvertVectorToTfLiteIntArray(intermediates);
+
+  return kTfLiteOk;
+}
 MicroInterpreter::MicroInterpreter(const Model* model,
                                    const MicroOpResolver& op_resolver,
                                    uint8_t* tensor_arena,
@@ -175,6 +203,34 @@ TfLiteStatus MicroInterpreter::PrepareNodeAndRegistrationDataFromFlatbuffer() {
       node->builtin_data = reinterpret_cast<void*>(builtin_data);
       node->custom_initial_data = custom_data;
       node->custom_initial_data_size = custom_data_size;
+
+      // LSTM specific COde
+      // Check for intermediate vectors
+        if (OpUsesIntermediates(op_type)) {
+          size_t alloc_count = subgraph->tensors()->size();
+          // Need full tensors to cover intermediates.
+          TfLiteTensor* tensorsToupdate =
+          (TfLiteTensor*)allocator_.AllocatePersistentBuffer( sizeof(TfLiteTensor) * alloc_count);
+          *tensorsToupdate = {};
+		  size_t tensor_index = 0;
+          tensor_index = op->intermediates()->size();
+          if (tensor_index > 0) {
+            if (tflite::AddIntermediateParameters(
+                    tflite::FlatBufferIntArrayToVector(op->intermediates()), node,
+                    0, nullptr) != kTfLiteOk) {
+              TF_LITE_REPORT_ERROR(
+                  error_reporter_,
+                  "Failed to populate an intermediate TfLiteTensor struct "
+                  "from flatbuffer data!");
+            }
+            int intrIndex = node->intermediates->data[4];
+            TfLiteTensor* intermTensor = allocator_.AllocateTempTfLiteTensor(
+                              model_, graph_.GetAllocations(), 0,
+                              get_subgraph_index());
+            memcpy(&tensorsToupdate[intrIndex], intermTensor, sizeof(tensorsToupdate[intrIndex]));
+            context_.tensors = tensorsToupdate;
+          }
+      }
     }
   }
   return kTfLiteOk;
@@ -324,6 +380,39 @@ TfLiteStatus MicroInterpreter::RequestScratchBufferInArena(TfLiteContext* ctx,
       reinterpret_cast<MicroInterpreter*>(ctx->impl_);
   return interpreter->allocator_.RequestScratchBufferInArena(
       bytes, interpreter->graph_.GetCurrentSubgraphIndex(), buffer_idx);
+}
+
+// Multiply two sizes and return true if overflow occurred;
+// This is based off tensorflow/overflow.h but is simpler as we already
+// have unsigned numbers. It is also generalized to work where sizeof(size_t)
+// is not 8.
+TfLiteStatus MultiplyAndCheckOverflow(size_t a, size_t b, size_t* product) {
+  // Multiplying a * b where a and b are size_t cannot result in overflow in a
+  // size_t accumulator if both numbers have no non-zero bits in their upper
+  // half.
+  constexpr size_t size_t_bits = 8 * sizeof(size_t);
+  constexpr size_t overflow_upper_half_bit_position = size_t_bits / 2;
+  *product = a * b;
+  // If neither integers have non-zero bits past 32 bits can't overflow.
+  // Otherwise check using slow devision.
+  if ((a | b) >> overflow_upper_half_bit_position != 0) {
+    if (a != 0 && *product / a != b) return kTfLiteError;
+  }
+  return kTfLiteOk;
+}
+
+TfLiteStatus MicroInterpreter::BytesRequired(TfLiteContext* context,
+                                             TfLiteType type, const int* dims,
+                                             size_t dims_size, size_t* bytes) {
+  size_t count = 1;
+  for (size_t k = 0; k < dims_size; k++) {
+    size_t old_count = count;
+    MultiplyAndCheckOverflow(old_count, dims[k], &count);
+  }
+  size_t type_size = 0;
+  GetSizeOfType(context, type, &type_size);
+  MultiplyAndCheckOverflow(type_size, count, bytes);
+  return kTfLiteOk;
 }
 
 void* MicroInterpreter::GetScratchBuffer(TfLiteContext* ctx, int buffer_idx) {
